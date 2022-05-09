@@ -42,6 +42,7 @@ var database persistence.Database
 var opts struct {
 	Addr     string
 	Database string
+	OriginId int // unused in magneticow
 	// Credentials is nil when no-auth cmd-line flag is supplied.
 	Credentials        map[string][]byte // TODO: encapsulate credentials and mutex for safety
 	CredentialsRWMutex sync.RWMutex
@@ -179,7 +180,7 @@ func main() {
 	templates["feed"] = template.Must(template.New("feed").Funcs(templateFunctions).Parse(string(mustAsset("templates/feed.xml"))))
 	templates["homepage"] = template.Must(template.New("homepage").Funcs(templateFunctions).Parse(string(mustAsset("templates/homepage.html"))))
 
-	database, err = persistence.MakeDatabase(opts.Database, logger)
+	database, err = persistence.MakeDatabase(opts.OriginId, opts.Database, logger)
 	if err != nil {
 		zap.L().Fatal("could not access to database", zap.Error(err))
 	}
@@ -236,6 +237,7 @@ func parseFlags() error {
 				"/database.sqlite3" +
 				"?_journal_mode=WAL" // https://github.com/mattn/go-sqlite3#connection-string
 	} else {
+		opts.OriginId = -1 // unused in magneticow
 		opts.Database = cmdFlags.Database
 	}
 

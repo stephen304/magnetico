@@ -24,6 +24,7 @@ import (
 )
 
 type opFlags struct {
+	OriginId    int
 	DatabaseURL string
 
 	IndexerAddrs        []string
@@ -92,7 +93,7 @@ func main() {
 	interruptChan := make(chan os.Signal, 1)
 	signal.Notify(interruptChan, os.Interrupt)
 
-	database, err := persistence.MakeDatabase(opFlags.DatabaseURL, logger)
+	database, err := persistence.MakeDatabase(opFlags.OriginId, opFlags.DatabaseURL, logger)
 	if err != nil {
 		logger.Fatal("Could not open the database", zap.String("url", opFlags.DatabaseURL), zap.Error(err))
 	}
@@ -134,6 +135,7 @@ func main() {
 
 func parseFlags() (*opFlags, error) {
 	var cmdF struct {
+		OriginId    int    `long:"origin-id" description:"Unique origin-id for clustering."`
 		DatabaseURL string `long:"database" description:"URL of the database."`
 
 		IndexerAddrs        []string `long:"indexer-addr" description:"Address(es) to be used by indexing DHT nodes." default:"0.0.0.0:0"`
@@ -163,7 +165,14 @@ func parseFlags() (*opFlags, error) {
 				"&_foreign_keys=true"
 
 	} else {
+		if cmdF.OriginId == 0 {
+			zap.S().Fatalf("Cannot start replication without `--origin-id`")
+		}
+		if cmdF.OriginId < 0 {
+			zap.S().Fatalf("Illegal `--origin-id`")
+		}
 		opF.DatabaseURL = cmdF.DatabaseURL
+		opF.OriginId = cmdF.OriginId
 	}
 
 	if err = checkAddrs(cmdF.IndexerAddrs); err != nil {

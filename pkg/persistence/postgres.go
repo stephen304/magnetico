@@ -16,12 +16,15 @@ import (
 )
 
 type postgresDatabase struct {
-	conn   *sql.DB
-	schema string
+	conn      *sql.DB
+	schema    string
+	origin_id int
 }
 
-func makePostgresDatabase(url_ *url.URL) (Database, error) {
+func makePostgresDatabase(origin_id int, url_ *url.URL) (Database, error) {
 	db := new(postgresDatabase)
+
+	db.origin_id = origin_id
 
 	schema := url_.Query().Get("schema")
 	if schema == "" {
@@ -117,13 +120,14 @@ func (db *postgresDatabase) AddNewTorrent(infoHash []byte, name string, files []
 
 	err = tx.QueryRow(`
 		INSERT INTO torrents (
+			origin_id,
 			info_hash,
 			name,
 			total_size,
 			discovered_on
-		) VALUES ($1, $2, $3, $4)
+		) VALUES ($1, $2, $3, $4, $5)
 		RETURNING id;
-	`, infoHash, name, totalSize, time.Now().Unix()).Scan(&lastInsertId)
+	`, db.origin_id, infoHash, name, totalSize, time.Now().Unix()).Scan(&lastInsertId)
 	if err != nil {
 		return errors.Wrap(err, "tx.QueryRow (INSERT INTO torrents)")
 	}
@@ -591,6 +595,7 @@ func (db *postgresDatabase) setupDatabase() error {
 
 		CREATE TABLE IF NOT EXISTS torrents (
 			id             INTEGER PRIMARY KEY DEFAULT nextval('seq_torrents_id'),
+			origin_id      INTEGER NOT NULL,
 			info_hash      bytea NOT NULL UNIQUE,
 			name           TEXT NOT NULL,
 			total_size     BIGINT NOT NULL CHECK(total_size > 0),

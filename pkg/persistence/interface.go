@@ -109,7 +109,7 @@ func (tm *TorrentMetadata) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func MakeDatabase(rawURL string, logger *zap.Logger) (Database, error) {
+func MakeDatabase(originId int, rawURL string, logger *zap.Logger) (Database, error) {
 	if logger != nil {
 		zap.ReplaceGlobals(logger)
 	}
@@ -124,7 +124,7 @@ func MakeDatabase(rawURL string, logger *zap.Logger) (Database, error) {
 		return makeSqlite3Database(url_)
 
 	case "postgres":
-		return makePostgresDatabase(url_)
+		return makePostgresDatabase(originId, url_)
 
 	case "stdout":
 		return makeStdoutDatabase(url_)
