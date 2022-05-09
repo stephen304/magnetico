@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"text/template"
 	"time"
 	"unicode/utf8"
 
@@ -163,7 +164,7 @@ func (db *postgresDatabase) GetNumberOfTorrents() (uint, error) {
 	// https://www.postgresql.org/message-id/568BF820.9060101%40comarch.com
 	// https://wiki.postgresql.org/wiki/Count_estimate
 	rows, err := db.conn.Query(
-		"SELECT reltuples::BIGINT AS estimate_count FROM pg_class WHERE relname='torrents';",
+		"SELECT GREATEST(reltuples::BIGINT,0) AS estimate_count FROM pg_class WHERE relname='torrents';",
 	)
 	if err != nil {
 		return 0, err
@@ -197,7 +198,232 @@ func (db *postgresDatabase) QueryTorrents(
 	lastOrderedValue *float64,
 	lastID *uint64,
 ) ([]TorrentMetadata, error) {
-	return nil, NotImplementedError
+	if query == "" && orderBy == ByRelevance {
+		return nil, fmt.Errorf("torrents cannot be ordered by relevance when the query is empty")
+	}
+	if (lastOrderedValue == nil) != (lastID == nil) {
+		return nil, fmt.Errorf("lastOrderedValue and lastID should be supplied together, if supplied")
+	}
+
+	doJoin := query != ""
+	firstPage := lastID == nil
+
+	queryArgs := make([]interface{}, 0)
+	var sqlQuery string
+
+	// executeTemplate is used to prepare the SQL query, WITH PLACEHOLDERS FOR USER INPUT.
+	if doJoin {
+		queryArgs = append(queryArgs, query)
+		queryArgs = append(queryArgs, epoch)
+		if firstPage {
+			queryArgs = append(queryArgs, limit)
+			sqlQuery = executeTemplate(`
+					SELECT id
+									, info_hash
+						, name
+						, total_size
+						, discovered_on
+						, (SELECT COUNT(*) FROM files WHERE torrents.id = files.torrent_id) AS n_files
+						, idx.rank
+					FROM torrents
+					INNER JOIN (
+						SELECT id
+							, pgroonga_score(tableoid, ctid) AS rank
+						FROM torrents
+						WHERE name &@~ $1::text
+					) AS idx USING(id)
+					WHERE     discovered_on <= $2::integer
+					ORDER BY {{.OrderOn}} {{AscOrDesc .Ascending}}, id {{AscOrDesc .Ascending}}
+					LIMIT $3::integer;
+				`, struct {
+				DoJoin    bool
+				FirstPage bool
+				OrderOn   string
+				Ascending bool
+			}{
+				DoJoin:    doJoin,
+				FirstPage: firstPage,
+				OrderOn:   orderOn(orderBy),
+				Ascending: ascending,
+			}, template.FuncMap{
+				"GTEorLTE": func(ascending bool) string {
+					if ascending {
+						return ">"
+					} else {
+						return "<"
+					}
+				},
+				"AscOrDesc": func(ascending bool) string {
+					if ascending {
+						return "ASC"
+					} else {
+						return "DESC"
+					}
+				},
+			})
+		} else {
+			queryArgs = append(queryArgs, lastOrderedValue)
+			queryArgs = append(queryArgs, lastID)
+			queryArgs = append(queryArgs, limit)
+			sqlQuery = executeTemplate(`
+			SELECT id
+							 , info_hash
+				 , name
+				 , total_size
+				 , discovered_on
+				 , (SELECT COUNT(*) FROM files WHERE torrents.id = files.torrent_id) AS n_files
+				 , idx.rank
+			FROM torrents
+			INNER JOIN (
+				SELECT id
+					 , pgroonga_score(tableoid, ctid) AS rank
+				FROM torrents
+				WHERE name &@~ $1::text
+			) AS idx USING(id)
+			WHERE     discovered_on <= $2::integer
+					AND ( {{.OrderOn}}, id ) {{GTEorLTE .Ascending}} ($3::integer, $4::integer) -- https://www.sqlite.org/rowvalue.html#row_value_comparisons
+			ORDER BY {{.OrderOn}} {{AscOrDesc .Ascending}}, id {{AscOrDesc .Ascending}}
+			LIMIT $5::integer;
+		`, struct {
+				DoJoin    bool
+				FirstPage bool
+				OrderOn   string
+				Ascending bool
+			}{
+				DoJoin:    doJoin,
+				FirstPage: firstPage,
+				OrderOn:   orderOn(orderBy),
+				Ascending: ascending,
+			}, template.FuncMap{
+				"GTEorLTE": func(ascending bool) string {
+					if ascending {
+						return ">"
+					} else {
+						return "<"
+					}
+				},
+				"AscOrDesc": func(ascending bool) string {
+					if ascending {
+						return "ASC"
+					} else {
+						return "DESC"
+					}
+				},
+			})
+		}
+	} else {
+		queryArgs = append(queryArgs, epoch)
+		if firstPage {
+			queryArgs = append(queryArgs, limit)
+			sqlQuery = executeTemplate(`
+			SELECT id
+							 , info_hash
+				 , name
+				 , total_size
+				 , discovered_on
+				 , (SELECT COUNT(*) FROM files WHERE torrents.id = files.torrent_id) AS n_files
+				 , 0
+			FROM torrents
+			WHERE     discovered_on <= $1::integer
+			ORDER BY {{.OrderOn}} {{AscOrDesc .Ascending}}, id {{AscOrDesc .Ascending}}
+			LIMIT $2::integer;
+		`, struct {
+				DoJoin    bool
+				FirstPage bool
+				OrderOn   string
+				Ascending bool
+			}{
+				DoJoin:    doJoin,
+				FirstPage: firstPage,
+				OrderOn:   orderOn(orderBy),
+				Ascending: ascending,
+			}, template.FuncMap{
+				"GTEorLTE": func(ascending bool) string {
+					if ascending {
+						return ">"
+					} else {
+						return "<"
+					}
+				},
+				"AscOrDesc": func(ascending bool) string {
+					if ascending {
+						return "ASC"
+					} else {
+						return "DESC"
+					}
+				},
+			})
+		} else {
+			queryArgs = append(queryArgs, lastOrderedValue)
+			queryArgs = append(queryArgs, lastID)
+			queryArgs = append(queryArgs, limit)
+			sqlQuery = executeTemplate(`
+			SELECT id
+							 , info_hash
+				 , name
+				 , total_size
+				 , discovered_on
+				 , (SELECT COUNT(*) FROM files WHERE torrents.id = files.torrent_id) AS n_files
+				 , 0
+			FROM torrents
+			WHERE     discovered_on <= $1::integer
+					AND ( {{.OrderOn}}, id ) {{GTEorLTE .Ascending}} ($2::integer, $3::integer) -- https://www.sqlite.org/rowvalue.html#row_value_comparisons
+			ORDER BY {{.OrderOn}} {{AscOrDesc .Ascending}}, id {{AscOrDesc .Ascending}}
+			LIMIT $4::integer;
+		`, struct {
+				DoJoin    bool
+				FirstPage bool
+				OrderOn   string
+				Ascending bool
+			}{
+				DoJoin:    doJoin,
+				FirstPage: firstPage,
+				OrderOn:   orderOn(orderBy),
+				Ascending: ascending,
+			}, template.FuncMap{
+				"GTEorLTE": func(ascending bool) string {
+					if ascending {
+						return ">"
+					} else {
+						return "<"
+					}
+				},
+				"AscOrDesc": func(ascending bool) string {
+					if ascending {
+						return "ASC"
+					} else {
+						return "DESC"
+					}
+				},
+			})
+		}
+	}
+
+	rows, err := db.conn.Query(sqlQuery, queryArgs...)
+	if err != nil {
+		return nil, errors.Wrap(err, "query error")
+	}
+
+	torrents := make([]TorrentMetadata, 0)
+	for rows.Next() {
+		var torrent TorrentMetadata
+		err = rows.Scan(
+			&torrent.ID,
+			&torrent.InfoHash,
+			&torrent.Name,
+			&torrent.Size,
+			&torrent.DiscoveredOn,
+			&torrent.NFiles,
+			&torrent.Relevance,
+		)
+		if err != nil {
+			return nil, err
+		}
+		torrents = append(torrents, torrent)
+	}
+	defer db.closeRows(rows)
+
+	return torrents, nil
 }
 
 func (db *postgresDatabase) GetTorrent(infoHash []byte) (*TorrentMetadata, error) {
@@ -233,7 +459,7 @@ func (db *postgresDatabase) GetFiles(infoHash []byte) ([]File, error) {
 	rows, err := db.conn.Query(`
 		SELECT
        		f.size,
-       		f.path 
+       		f.path
 		FROM files f, torrents t WHERE f.torrent_id = t.id AND t.info_hash = $1;`,
 		infoHash,
 	)
@@ -255,10 +481,80 @@ func (db *postgresDatabase) GetFiles(infoHash []byte) ([]File, error) {
 }
 
 func (db *postgresDatabase) GetStatistics(from string, n uint) (*Statistics, error) {
-	return nil, NotImplementedError
+	fromTime, gran, err := ParseISO8601(from)
+	if err != nil {
+		return nil, errors.Wrap(err, "parsing ISO8601 error")
+	}
+
+	var toTime time.Time
+	var timef string // time format: https://www.sqlite.org/lang_datefunc.html
+
+	switch gran {
+	case Year:
+		toTime = fromTime.AddDate(int(n), 0, 0)
+		timef = "YYYY"
+	case Month:
+		toTime = fromTime.AddDate(0, int(n), 0)
+		timef = "YYYY-MM"
+	case Week:
+		toTime = fromTime.AddDate(0, 0, int(n)*7)
+		timef = "YYYY-IW"
+	case Day:
+		toTime = fromTime.AddDate(0, 0, int(n))
+		timef = "YYYY-MM-DD"
+	case Hour:
+		toTime = fromTime.Add(time.Duration(n) * time.Hour)
+		timef = `YYYY-MM-DD"T"HH24`
+	}
+
+	// TODO: make it faster!
+	rows, err := db.conn.Query(fmt.Sprintf(`
+			SELECT to_char(to_timestamp(discovered_on),'%s') AS dT
+				, sum(files.size) AS tS
+				, count(DISTINCT torrents.id) AS nD
+				, count(DISTINCT files.id) AS nF
+			FROM torrents, files
+			WHERE torrents.id = files.torrent_id
+				AND discovered_on >= $1::integer
+				AND discovered_on <= $2::integer
+			GROUP BY dt;`,
+		timef),
+		fromTime.Unix(), toTime.Unix())
+	if err != nil {
+		return nil, err
+	}
+
+	stats := NewStatistics()
+
+	for rows.Next() {
+		var dT string
+		var tS, nD, nF uint64
+		if err := rows.Scan(&dT, &tS, &nD, &nF); err != nil {
+			if err := rows.Close(); err != nil {
+				panic(err.Error())
+			}
+			return nil, err
+		}
+		stats.NDiscovered[dT] = nD
+		stats.TotalSize[dT] = tS
+		stats.NFiles[dT] = nF
+	}
+	defer closeRows(rows)
+
+	return stats, nil
 }
 
 func (db *postgresDatabase) setupDatabase() error {
+	// Create extensions
+	ext_tx, err := db.conn.Begin()
+	if err != nil {
+		return errors.Wrap(err, "sql.DB.Begin")
+	}
+	defer ext_tx.Rollback()
+	ext_tx.Exec("CREATE EXTENSION pg_trgm;")
+	ext_tx.Exec("CREATE EXTENSION pgroonga;")
+	ext_tx.Commit() // ignore any errors just do the thing
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return errors.Wrap(err, "sql.DB.Begin")
@@ -286,7 +582,7 @@ func (db *postgresDatabase) setupDatabase() error {
 	// Initial Setup for schema version 0:
 	// FROZEN.
 	_, err = tx.Exec(`
-		CREATE SCHEMA IF NOT EXISTS ` + db.schema + `;		
+		CREATE SCHEMA IF NOT EXISTS ` + db.schema + `;
 
 		-- Torrents ID sequence generator
 		CREATE SEQUENCE IF NOT EXISTS seq_torrents_id;
@@ -320,9 +616,10 @@ func (db *postgresDatabase) setupDatabase() error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_files_torrent_id ON files (torrent_id);
+		CREATE INDEX IF NOT EXISTS pgroonga_torrents_name_index ON torrents USING pgroonga (name);
 
 		CREATE TABLE IF NOT EXISTS migrations (
-		    schema_version		SMALLINT NOT NULL UNIQUE 
+		    schema_version		SMALLINT NOT NULL UNIQUE
 		);
 
 		INSERT INTO migrations (schema_version) VALUES (0) ON CONFLICT DO NOTHING;

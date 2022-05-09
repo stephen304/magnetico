@@ -3,17 +3,37 @@ version: "2"
 services:
   magneticod:
     image: boramalper/magneticod:latest
+    container_name: magnetico_d
+    restart: unless-stopped
+    depends_on:
+      - db
     volumes:
-      - ${MAGNETICOD_DATA}:/root/.local/share/magneticod
-      - ${MAGNETICOD_CONFIG}:/root/.config/magneticod
-    network_mode: "host"
+#      - ${MAGNETICOD_DATA}:/root/.local/share/magneticod # Uncomment for sqlite
+#      - ${MAGNETICOD_CONFIG}:/root/.config/magneticod # Uncomment to use magneticod config file
+    ports:
+      - "1212:1212/udp"
     command:
-      - "--indexer-addr=0.0.0.0:1212"
+      - "--database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}?port=5432"
+      - "--origin-id=1"
 
   magneticow:
     image: boramalper/magneticow:latest
+    container_name: magnetico_w
+    restart: unless-stopped
+    depends_on:
+      - db
+      - magneticod
+    command:
+      - "--database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}?port=5432"
     volumes:
-      - ${MAGNETICOD_DATA}:/root/.local/share/magneticod
+#      - ${MAGNETICOD_DATA}:/root/.local/share/magneticod # Uncomment for sqlite
       - ${MAGNETICOW_CONFIG}:/root/.config/magneticow
     ports:
       - "8080:8080"
+
+  db:
+    image: groonga/pgroonga:latest-debian-14
+    container_name: magnetico_db
+    restart: unless-stopped
+    volumes:
+      - ${POSTGRES_DATA}:/var/lib/postgresql/data

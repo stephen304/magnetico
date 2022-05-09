@@ -16,7 +16,7 @@ require (
 	github.com/iwanbk/gobeanstalk v0.0.0-20160903043409-dbbb23937c31
 	github.com/jackc/pgx/v4 v4.9.2
 	github.com/jessevdk/go-flags v1.4.0
-	github.com/kevinburke/go-bindata v3.16.0+incompatible // indirect
+	github.com/kevinburke/go-bindata v3.23.0+incompatible // indirect
 	github.com/libp2p/go-sockaddr v0.0.1
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible
 	github.com/pkg/errors v0.9.1
